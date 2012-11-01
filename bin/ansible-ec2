@@ -1,0 +1,125 @@
+#!/usr/bin/env python
+
+import argparse
+import sys
+from subprocess import call
+from ansible import inventory
+from ansible import constants
+
+class AnsibleEc2Cli(object):
+    def __init__(self):
+        ''' Main execution path '''
+        
+        self.parse_cli_args()
+        self.args.func()
+    
+    
+    def parse_cli_args(self):
+        ''' Command line argument processing '''
+        
+        # Top level parser
+        parser = argparse.ArgumentParser(description='AWS EC2 helpers, utilities and tricks built on top of Ansible')
+        
+        # Options common to all commands
+        self.common_parser = argparse.ArgumentParser(add_help=False)
+        self.common_parser.add_argument('-v', '--verbose', action='count',
+                           help='Verbose output useful for debugging, can be use multiple times for more verbose output')
+        
+        self.subparsers = parser.add_subparsers(title='Commands')
+        self.command_parsers = {}
+        
+        # Create the parser for the "help" command
+        help_parser = self.add_command('help', 'Get help about a command', add_common=False)
+        help_parser.add_argument('help_command', metavar='command', nargs='*', help='The command to get help on')
+
+        # Create the parser for the "info" command
+        info_parser = self.add_command('info', 'Get information about a specific instance')
+        info_parser.add_argument('host', action='store', help='The EC2 instance to connect to')
+        
+        # Create the parser for the "ssh" command
+        ssh_parser = self.add_command('ssh', 'Open an SSH connection to a specific instance')
+        ssh_parser.add_argument('--name', action='store', help='The "Name" tag of the instance to SSH to')
+        
+        # Final step - go parse those args
+        self.parser = parser
+        self.args = self.parser.parse_args()
+    
+    
+    def add_command(self, command, help, add_common=True):
+        ''' Adds a command to the list of available commands, and returns a
+        parser that can be used to add arguments specific to that command '''
+        
+        if add_common:
+            self.command_parsers[command] = self.subparsers.add_parser(command, help=help,
+                                                                       parents=[self.common_parser])
+        else:
+            self.command_parsers[command] = self.subparsers.add_parser(command, help=help)
+        
+        self.command_parsers[command].set_defaults(func=getattr(self, command))
+        
+        return self.command_parsers[command]
+    
+    
+    def help(self):
+        # Check for help required
+        if 'help_command' in self.args:
+            if len(self.args.help_command) == 0:
+                self.parser.print_help()
+            else:
+                cmd = self.args.help_command[0]
+                if cmd in self.command_parsers:
+                    self.command_parsers[cmd].print_help()
+                else:
+                    print 'Error: Unknown command: %s' % self.args.help_command[0]
+                    sys.exit(1)
+            sys.exit()
+    
+    
+    def ssh(self):
+        if 'name' in self.args:
+            pattern = 'tag_Name_%s' % self.args.name
+            
+            inventory_manager = inventory.Inventory(constants.DEFAULT_HOST_LIST)
+            groups = inventory_manager.get_groups()
+        
+            if len(groups) == 0:
+                print >>sys.stderr, "No groups matched"
+                sys.exit(1)
+            
+            instance_group = None
+            for group in groups:
+                if group.name == pattern:
+                    instance_group = group
+                    break;
+                
+            hosts = instance_group.get_hosts();
+            if len(hosts) != 1:
+                print 'ERROR: %s matches more than one instance' & pattern
+                sys.exit(1)
+            host = hosts[0]
+            
+            cmd = 'ssh %s' % host.name
+            
+            print cmd
+            try:
+                retcode = call(cmd, shell=True)
+                if retcode < 0:
+                    print 'Child was terminated by signal', -retcode
+                else:
+                    print 'Child returned', retcode
+            except OSError as e:
+                print 'Execution failed:', e
+        else:
+            print 'oops: Not implemented yet'
+    
+    
+    def info(self):
+        print "This is Info"
+    
+    
+
+########################################################
+
+if __name__ == '__main__':
+    cli = AnsibleEc2Cli()
+
