@@ -2,6 +2,8 @@
 
 import argparse
 import sys
+from datetime import datetime
+import dateutil.parser
 from subprocess import call
 from ansible import inventory
 from ansible import constants
@@ -34,7 +36,7 @@ class AnsibleEc2Cli(object):
 
         # Create the parser for the "info" command
         info_parser = self.add_command('info', 'Get information about a specific instance')
-        info_parser.add_argument('host', action='store', help='The EC2 instance to connect to')
+        info_parser.add_argument('--name', action='store', help='The "Name" tag of the instance/s to get info on')
         
         # Create the parser for the "ssh" command
         ssh_parser = self.add_command('ssh', 'Open an SSH connection to a specific instance')
@@ -60,8 +62,32 @@ class AnsibleEc2Cli(object):
         return self.command_parsers[command]
     
     
+    def get_group_by_name(self, name):
+        ''' Gets an instance group by it's tag Name '''
+        
+        self.inventory_manager = inventory.Inventory(constants.DEFAULT_HOST_LIST)
+        groups = self.inventory_manager.get_groups()
+        if len(groups) == 0:
+            print >>sys.stderr, 'ERROR: No instance groups found - check inventory'
+            sys.exit(1)
+        
+        pattern = 'tag_Name_%s' % self.args.name
+        instance_group = None
+        for group in groups:
+            if group.name == pattern:
+                instance_group = group
+                break;
+        
+        if instance_group == None:
+            print >>sys.stderr, 'ERROR: No instance group matched the given name'
+            sys.exit(1)
+        
+        return instance_group
+    
+    
     def help(self):
-        # Check for help required
+        ''' Command specific help '''
+        
         if 'help_command' in self.args:
             if len(self.args.help_command) == 0:
                 self.parser.print_help()
@@ -72,29 +98,16 @@ class AnsibleEc2Cli(object):
                 else:
                     print 'Error: Unknown command: %s' % self.args.help_command[0]
                     sys.exit(1)
-            sys.exit()
     
     
     def ssh(self):
         if 'name' in self.args:
-            pattern = 'tag_Name_%s' % self.args.name
-            
-            inventory_manager = inventory.Inventory(constants.DEFAULT_HOST_LIST)
-            groups = inventory_manager.get_groups()
-        
-            if len(groups) == 0:
-                print >>sys.stderr, "No groups matched"
-                sys.exit(1)
-            
-            instance_group = None
-            for group in groups:
-                if group.name == pattern:
-                    instance_group = group
-                    break;
-                
+            instance_group = self.get_group_by_name(self.args.name)
             hosts = instance_group.get_hosts();
             if len(hosts) != 1:
-                print 'ERROR: %s matches more than one instance' & pattern
+                print 'ERROR: %s matches more than one instance' % pattern
+                for h in hosts:
+                    print '  - ' + h.name
                 sys.exit(1)
             host = hosts[0]
             
@@ -114,8 +127,41 @@ class AnsibleEc2Cli(object):
     
     
     def info(self):
-        print "This is Info"
-    
+        if 'name' in self.args:
+            instance_group = self.get_group_by_name(self.args.name)
+            i = 1
+            now = datetime.utcnow()
+            for host in instance_group.get_hosts():
+                info = self.inventory_manager.get_variables(host.name)
+                
+                # Do date/time calculations
+                launch = dateutil.parser.parse(info['ec2_launch_time']).replace(tzinfo=None)
+                uptime = now - launch
+                
+                # We have all the data, go print
+                print '%d: %s' % (i, info['ec2_tag_Name'])
+                print '  Instance: %-15s      AMI: %-15s  Kernel: %s' % (info['ec2_id'], info['ec2_image_id'], info['ec2_kernel'])
+                print '      Type: %-15s     Arch: %-15s   State: %s' % (info['ec2_instance_type'], info['ec2_architecture'], info['ec2_state'])
+                print '      Zone: %-15s Key Pair: %s' % (info['ec2_placement'], info['ec2_key_name'])
+                print '  Launch Time: %s' % info['ec2_launch_time']
+                print '      Up Time: %d days, %d hours' % (uptime.days, (uptime.seconds/3600))
+                print '   Public DNS: %s' % info['ec2_public_dns_name']
+                print '    Public IP: %s' % info['ec2_ip_address']
+                print '  Private DNS: %s' % info['ec2_private_dns_name']
+                print '   Private IP: %s' % info['ec2_private_ip_address']
+                if info['ec2_vpc_id']:
+                    print '  VPC: %s    Subnet: %s' % (info['ec2_vpc_id'], info['ec2_subnet_id'])
+                print '  Security Groups: %s' % info['ec2_security_group_names']
+                print ''
+                i = i+1
+                '''
+                ec2_security_group_ids: sg-6021bd08
+                ec2_security_group_names: dmp-0725-InstanceSecurityGroup-1XTZBSCMP1BZB
+                group_names: [u'i-b6c8f3ce', u'security_group_dmp-0725-InstanceSecurityGroup-1XTZBSCMP1BZB', u'tag_Name_DMP', u'tag_aws_autoscaling_groupName_dmp-0725-DMPServerGroup-144PQWYTP9X94', u'tag_aws_cloudformation_logical-id_DMPServerGroup', u'tag_aws_cloudformation_stack-id_arn_aws_cloudformation_us-east-1_313895386618_stack_dmp-0725_0d723e40-d689-11e1-b4af-506cfa68b825', u'tag_aws_cloudformation_stack-name_dmp-0725', u'us-east-1', u'us-east-1c']
+                '''
+        
+        else:
+            print 'oops: Not implemented yet'
     
 
 ########################################################
