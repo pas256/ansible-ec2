@@ -2,6 +2,7 @@
 
 import argparse
 import sys
+import re
 from datetime import datetime
 import dateutil.parser
 from subprocess import call
@@ -12,8 +13,15 @@ class AnsibleEc2Cli(object):
     def __init__(self):
         ''' Main execution path '''
         
-        self.parse_cli_args()
+        # Handle CLI
+        self.args = self.parse_cli_args()
         print self.args
+        
+        # CLI post-processing
+        self.group_filters = self.get_group_filters()
+        print self.group_filters
+        
+        # Run desired command
         self.args.func()
     
     
@@ -24,19 +32,21 @@ class AnsibleEc2Cli(object):
         self.parser = argparse.ArgumentParser(description='AWS EC2 helpers, utilities and tricks built on top of Ansible')
         
         # Options common to all commands
-        self.common_parser = argparse.ArgumentParser(add_help=False)
-        self.common_parser.add_argument('-i', '--inventory-file', metavar='INVENTORY',
-                action='store', help='The inventory file to use (default=/etc/ansible/hosts)')
-        self.common_parser.add_argument('-ic', action='store_true', default=False,
+        self._common_parser = argparse.ArgumentParser(add_help=False)
+        self._common_parser.add_argument('-i', '--inventory-file', metavar='INVENTORY',
+                action='store', default=constants.DEFAULT_HOST_LIST,
+                help='The inventory file to use (default=/etc/ansible/hosts)')
+        self._common_parser.add_argument('-ic', action='store_true', default=False,
                 help='Ignore case - perform case insensitive matches on the filters')
-        self.common_parser.add_argument('-v', '--verbose', action='count',
+        self._common_parser.add_argument('-v', '--verbose', action='count',
                 help='Verbose output useful for debugging, can be use multiple times for more verbose output')
         
         # Filtering
-        filters = self.common_parser.add_argument_group('Filters', 'Reduce the number of instances by filtering on various fields. Filters can be used in combination with each other, and only instances that appear in all filtered sets are returned. If no filters are used, all instances are returned in all regions.')
+        filters = self._common_parser.add_argument_group('Filters', 'Reduce the number of instances by filtering on various fields. Filters can be used in combination with each other, and only instances that appear in all filtered sets are returned. If no filters are used, all instances are returned in all regions.')
         filters.add_argument('--name', action='store', help='The "Name" tag of the instance/s to filter on. E.g. --name=Server1')
         filters.add_argument('--sg', metavar='SECURITY_GROUP', action='store', help='Return only instances in a specific security group. E.g. --sg=default')
         filters.add_argument('--key', metavar='KEY_PAIR', action='store', help='The name of the key pair to filter on. E.g. --key=superadmin')
+        filters.add_argument('--type', metavar='INSTANCE_TYPE', action='store', help='Return only host using the specific instance type. E.g. --type=m1.xlarge')
         filters.add_argument('--region', action='store', help='Limit to only one region. E.g. --region=us-east-1')
         filters.add_argument('--zone', metavar='AVAILABILITY_ZONE', action='store', help='Limit to only one availability zone. E.g. --zone=us-east-1a')
         filters.add_argument('raw_group', metavar='GROUP_NAME', nargs='?', help='The raw group name to filter on based on the groups produced by the Inventory. This can also be the Instance ID. E.g. i-abcd1234')
@@ -60,7 +70,7 @@ class AnsibleEc2Cli(object):
         ssh_parser.add_argument('-u', '--user', metavar='REMOTE_USER', action='store', help='Connect as this user')
         
         # Final step - go parse those args
-        self.args = self.parser.parse_args()
+        return self.parser.parse_args()
     
     
     def add_command(self, command, help, add_common=True):
@@ -69,7 +79,7 @@ class AnsibleEc2Cli(object):
         
         if add_common:
             self.command_parsers[command] = self.subparsers.add_parser(command, help=help,
-                                                                       parents=[self.common_parser])
+                                                                       parents=[self._common_parser])
         else:
             self.command_parsers[command] = self.subparsers.add_parser(command, help=help)
         
@@ -78,11 +88,67 @@ class AnsibleEc2Cli(object):
         return self.command_parsers[command]
     
     
+    def get_group_filters(self):
+        ''' Apply all filters to the groups - basic set intersection '''
+        
+        groups_to_intersect = []
+        
+        # Name filter
+        if self.args.name != None:
+            pattern = self.to_safe('tag_Name_%s' % self.args.name)
+            if self.args.verbose >= 1:
+                print 'Filter: Name: matching %s' % pattern
+            groups_to_intersect.append(pattern)
+        
+        # Security group filter
+        if self.args.sg != None:
+            pattern = self.to_safe('security_group_%s' % self.args.sg)
+            if self.args.verbose >= 1:
+                print 'Filter: Security Group: matching %s' % pattern
+            groups_to_intersect.append(pattern)
+        
+        # Key pair filter
+        if self.args.key != None:
+            pattern = self.to_safe('key_%s' % self.args.key)
+            if self.args.verbose >= 1:
+                print 'Filter: Key pair: matching %s' % pattern
+            groups_to_intersect.append(pattern)
+        
+        # Instance type filter
+        if self.args.type != None:
+            pattern = self.to_safe('type_%s' % self.args.type)
+            if self.args.verbose >= 1:
+                print 'Filter: Instance type: matching %s' % pattern
+            groups_to_intersect.append(pattern)
+        
+        # Availability zone filter
+        if self.args.zone != None:
+            pattern = self.to_safe(self.args.zone)
+            if self.args.verbose >= 1:
+                print 'Filter: Availability Zone: matching %s' % pattern
+            groups_to_intersect.append(pattern)
+        
+        # Region filter
+        if self.args.region != None:
+            pattern = self.to_safe(self.args.region)
+            if self.args.verbose >= 1:
+                print 'Filter: Region: matching %s' % pattern
+            groups_to_intersect.append(pattern)
+        
+        if len(groups_to_intersect) == 0:
+            # No filtering - return everything
+            if self.args.verbose >= 1:
+                print 'Filter: none'
+        
+        return groups_to_intersect
+    
+    
     def get_groups(self):
         ''' Gets a list of all groups '''
         
-        print 'Reading inventory...'
-        self.inventory_manager = inventory.Inventory(constants.DEFAULT_HOST_LIST)
+        if self.args.verbose > 0:
+            print 'Reading inventory...'
+        self.inventory_manager = inventory.Inventory(self.args.inventory_file)
         groups = self.inventory_manager.get_groups()
         if len(groups) == 0:
             print >>sys.stderr, 'ERROR: No instance groups found - check inventory'
@@ -92,23 +158,6 @@ class AnsibleEc2Cli(object):
             print 'Inventory produced %d groups' % len(groups)
         
         return groups
-    
-    
-    def get_group_by_name(self, name):
-        ''' Gets an instance group by it's tag Name '''
-        
-        pattern = 'tag_Name_%s' % self.args.name
-        instance_group = None
-        for group in self.get_groups():
-            if group.name == pattern:
-                instance_group = group
-                break;
-        
-        if instance_group == None:
-            print >>sys.stderr, 'ERROR: No instance group matched the given name'
-            sys.exit(1)
-        
-        return instance_group
     
     
     def help(self):
@@ -201,6 +250,14 @@ class AnsibleEc2Cli(object):
         
         else:
             print 'oops: Not implemented yet'
+    
+    
+    def to_safe(self, word):
+        ''' Converts 'bad' characters in a string to underscores so they can be
+        used as Ansible groups (this needs to always be the same as the
+        EC2 inventory plugin '''
+        
+        return re.sub("[^A-Za-z0-9\-]", "_", word)
 
 
 ########################################################
