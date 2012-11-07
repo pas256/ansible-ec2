@@ -13,6 +13,7 @@ class AnsibleEc2Cli(object):
         ''' Main execution path '''
         
         self.parse_cli_args()
+        print self.args
         self.args.func()
     
     
@@ -20,30 +21,45 @@ class AnsibleEc2Cli(object):
         ''' Command line argument processing '''
         
         # Top level parser
-        parser = argparse.ArgumentParser(description='AWS EC2 helpers, utilities and tricks built on top of Ansible')
+        self.parser = argparse.ArgumentParser(description='AWS EC2 helpers, utilities and tricks built on top of Ansible')
         
         # Options common to all commands
         self.common_parser = argparse.ArgumentParser(add_help=False)
+        self.common_parser.add_argument('-i', '--inventory-file', metavar='INVENTORY',
+                action='store', help='The inventory file to use (default=/etc/ansible/hosts)')
+        self.common_parser.add_argument('-ic', action='store_true', default=False,
+                help='Ignore case - perform case insensitive matches on the filters')
         self.common_parser.add_argument('-v', '--verbose', action='count',
-                           help='Verbose output useful for debugging, can be use multiple times for more verbose output')
+                help='Verbose output useful for debugging, can be use multiple times for more verbose output')
         
-        self.subparsers = parser.add_subparsers(title='Commands')
+        # Filtering
+        filters = self.common_parser.add_argument_group('Filters', 'Reduce the number of instances by filtering on various fields. Filters can be used in combination with each other, and only instances that appear in all filtered sets are returned. If no filters are used, all instances are returned in all regions.')
+        filters.add_argument('--name', action='store', help='The "Name" tag of the instance/s to filter on. E.g. --name=Server1')
+        filters.add_argument('--sg', metavar='SECURITY_GROUP', action='store', help='Return only instances in a specific security group. E.g. --sg=default')
+        filters.add_argument('--key', metavar='KEY_PAIR', action='store', help='The name of the key pair to filter on. E.g. --key=superadmin')
+        filters.add_argument('--region', action='store', help='Limit to only one region. E.g. --region=us-east-1')
+        filters.add_argument('--zone', metavar='AVAILABILITY_ZONE', action='store', help='Limit to only one availability zone. E.g. --zone=us-east-1a')
+        filters.add_argument('raw_group', metavar='GROUP_NAME', nargs='?', help='The raw group name to filter on based on the groups produced by the Inventory. This can also be the Instance ID. E.g. i-abcd1234')
+        
+        self.subparsers = self.parser.add_subparsers(title='Commands')
         self.command_parsers = {}
         
         # Create the parser for the "help" command
         help_parser = self.add_command('help', 'Get help about a command', add_common=False)
         help_parser.add_argument('help_command', metavar='command', nargs='*', help='The command to get help on')
-
+        
+        # Create the parser for the "list" command
+        list_parser = self.add_command('list', 'Get a list of instances/groups')
+        
         # Create the parser for the "info" command
         info_parser = self.add_command('info', 'Get information about a specific instance')
-        info_parser.add_argument('--name', action='store', help='The "Name" tag of the instance/s to get info on')
         
         # Create the parser for the "ssh" command
         ssh_parser = self.add_command('ssh', 'Open an SSH connection to a specific instance')
-        ssh_parser.add_argument('--name', action='store', help='The "Name" tag of the instance to SSH to')
+        ssh_parser.add_argument('--private-key', metavar='PRIVATE_KEY_FILE', action='store', help='Use this file to authenticate the connection')
+        ssh_parser.add_argument('-u', '--user', metavar='REMOTE_USER', action='store', help='Connect as this user')
         
         # Final step - go parse those args
-        self.parser = parser
         self.args = self.parser.parse_args()
     
     
@@ -62,18 +78,28 @@ class AnsibleEc2Cli(object):
         return self.command_parsers[command]
     
     
-    def get_group_by_name(self, name):
-        ''' Gets an instance group by it's tag Name '''
+    def get_groups(self):
+        ''' Gets a list of all groups '''
         
+        print 'Reading inventory...'
         self.inventory_manager = inventory.Inventory(constants.DEFAULT_HOST_LIST)
         groups = self.inventory_manager.get_groups()
         if len(groups) == 0:
             print >>sys.stderr, 'ERROR: No instance groups found - check inventory'
             sys.exit(1)
         
+        if self.args.verbose > 0:
+            print 'Inventory produced %d groups' % len(groups)
+        
+        return groups
+    
+    
+    def get_group_by_name(self, name):
+        ''' Gets an instance group by it's tag Name '''
+        
         pattern = 'tag_Name_%s' % self.args.name
         instance_group = None
-        for group in groups:
+        for group in self.get_groups():
             if group.name == pattern:
                 instance_group = group
                 break;
@@ -96,16 +122,28 @@ class AnsibleEc2Cli(object):
                 if cmd in self.command_parsers:
                     self.command_parsers[cmd].print_help()
                 else:
-                    print 'Error: Unknown command: %s' % self.args.help_command[0]
+                    print >>sys.stderr, 'ERROR: Unknown command: %s' % self.args.help_command[0]
                     sys.exit(1)
     
     
+    def list(self):
+        ''' Gets a list of instances '''
+        
+        group_names = []
+        for group in self.get_groups():
+            group_names.append(group.name)
+        
+        group_names.sort()
+        for name in group_names:
+            print name 
+    
+    
     def ssh(self):
-        if 'name' in self.args:
+        if 'name' in self.args and not self.args.name == None:
             instance_group = self.get_group_by_name(self.args.name)
             hosts = instance_group.get_hosts();
             if len(hosts) != 1:
-                print 'ERROR: %s matches more than one instance' % pattern
+                print >>sys.stderr, 'ERROR: %s matches more than one instance' % pattern
                 for h in hosts:
                     print '  - ' + h.name
                 sys.exit(1)
@@ -127,7 +165,8 @@ class AnsibleEc2Cli(object):
     
     
     def info(self):
-        if 'name' in self.args:
+        print self.args
+        if 'name' in self.args and not self.args.name == None:
             instance_group = self.get_group_by_name(self.args.name)
             i = 1
             now = datetime.utcnow()
@@ -162,7 +201,7 @@ class AnsibleEc2Cli(object):
         
         else:
             print 'oops: Not implemented yet'
-    
+
 
 ########################################################
 
