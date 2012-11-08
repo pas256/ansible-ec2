@@ -253,6 +253,10 @@ class AnsibleEc2Cli(object):
         for host in hosts:
             if self.args.long:
                 info = self.inventory_manager.get_variables(host)
+                if not 'ec2_id' in info:
+                    print 'Warning: Could not get EC2 information for: %s' % host
+                    continue
+                
                 tag_name = ' (' + info['ec2_tag_Name'] + ')' if 'ec2_tag_Name' in info else ''
                 print '%4d: %10s %s%s' % (i, info['ec2_id'], host, tag_name)
                 i += 1
@@ -308,6 +312,10 @@ class AnsibleEc2Cli(object):
         now = datetime.utcnow()
         for host in self.get_filtered_hosts():
             info = self.inventory_manager.get_variables(host)
+            if not 'ec2_id' in info:
+                print 'Warning: Could not get EC2 information for: %s' % host
+                continue
+            
             tag_name = info['ec2_tag_Name'] if 'ec2_tag_Name' in info else ''
             
             # Do date/time calculations
