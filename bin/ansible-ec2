@@ -84,8 +84,8 @@ class AnsibleEc2Cli(object):
         parser that can be used to add arguments specific to that command '''
         
         if add_common:
-            self.command_parsers[command] = self.subparsers.add_parser(command, help=help,
-                                                                       parents=[self._common_parser])
+            self.command_parsers[command] = self.subparsers.add_parser(command,
+                    help=help, parents=[self._common_parser])
         else:
             self.command_parsers[command] = self.subparsers.add_parser(command, help=help)
         
