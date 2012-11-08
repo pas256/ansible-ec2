@@ -3,11 +3,14 @@
 import argparse
 import sys
 import re
+import pprint
 from datetime import datetime
 import dateutil.parser
 from subprocess import call
 from ansible import inventory
 from ansible import constants
+
+pp = pprint.PrettyPrinter(indent=2)
 
 class AnsibleEc2Cli(object):
     def __init__(self):
@@ -18,8 +21,10 @@ class AnsibleEc2Cli(object):
         print self.args
         
         # CLI post-processing
+        self.verbose = 0
+        if 'verbose' in self.args and self.args.verbose != None:
+            self.verbose = self.args.verbose
         self.group_filters = self.get_group_filters()
-        print self.group_filters
         
         # Run desired command
         self.args.func()
@@ -60,6 +65,10 @@ class AnsibleEc2Cli(object):
         
         # Create the parser for the "list" command
         list_parser = self.add_command('list', 'Get a list of instances/groups')
+        list_parser.add_argument('-l', '--long', action='store_true', default=False,
+                help='List in long (detailed) format - but not as detailed as "ansible-ec2 info"')
+        list_parser.add_argument('--show-work', action='store_true', default=False,
+                help='Show the working out of each group before combining filters')
         
         # Create the parser for the "info" command
         info_parser = self.add_command('info', 'Get information about a specific instance')
@@ -91,62 +100,62 @@ class AnsibleEc2Cli(object):
     def get_group_filters(self):
         ''' Apply all filters to the groups - basic set intersection '''
         
-        groups_to_intersect = []
+        group_filters = []
         
         # Name filter
-        if self.args.name != None:
+        if 'name' in self.args and self.args.name != None:
             pattern = self.to_safe('tag_Name_%s' % self.args.name)
-            if self.args.verbose >= 1:
+            if self.verbose >= 1:
                 print 'Filter: Name: matching %s' % pattern
-            groups_to_intersect.append(pattern)
+            group_filters.append(pattern)
         
         # Security group filter
-        if self.args.sg != None:
+        if 'sg' in self.args and self.args.sg != None:
             pattern = self.to_safe('security_group_%s' % self.args.sg)
-            if self.args.verbose >= 1:
+            if self.verbose >= 1:
                 print 'Filter: Security Group: matching %s' % pattern
-            groups_to_intersect.append(pattern)
+            group_filters.append(pattern)
         
         # Key pair filter
-        if self.args.key != None:
+        if 'key' in self.args and self.args.key != None:
             pattern = self.to_safe('key_%s' % self.args.key)
-            if self.args.verbose >= 1:
+            if self.verbose >= 1:
                 print 'Filter: Key pair: matching %s' % pattern
-            groups_to_intersect.append(pattern)
+            group_filters.append(pattern)
         
         # Instance type filter
-        if self.args.type != None:
+        if 'type' in self.args and self.args.type != None:
             pattern = self.to_safe('type_%s' % self.args.type)
-            if self.args.verbose >= 1:
+            if self.verbose >= 1:
                 print 'Filter: Instance type: matching %s' % pattern
-            groups_to_intersect.append(pattern)
+            group_filters.append(pattern)
         
         # Availability zone filter
-        if self.args.zone != None:
+        if 'zone' in self.args and self.args.zone != None:
             pattern = self.to_safe(self.args.zone)
-            if self.args.verbose >= 1:
+            if self.verbose >= 1:
                 print 'Filter: Availability Zone: matching %s' % pattern
-            groups_to_intersect.append(pattern)
+            group_filters.append(pattern)
         
         # Region filter
-        if self.args.region != None:
+        if 'region' in self.args and self.args.region != None:
             pattern = self.to_safe(self.args.region)
-            if self.args.verbose >= 1:
+            if self.verbose >= 1:
                 print 'Filter: Region: matching %s' % pattern
-            groups_to_intersect.append(pattern)
+            group_filters.append(pattern)
         
-        if len(groups_to_intersect) == 0:
+        if len(group_filters) == 0:
             # No filtering - return everything
-            if self.args.verbose >= 1:
+            if self.verbose >= 1:
                 print 'Filter: none'
         
-        return groups_to_intersect
+        return group_filters
     
     
     def get_groups(self):
         ''' Gets a list of all groups '''
         
-        if self.args.verbose > 0:
+        if self.verbose > 0:
             print 'Reading inventory...'
         self.inventory_manager = inventory.Inventory(self.args.inventory_file)
         groups = self.inventory_manager.get_groups()
@@ -154,10 +163,29 @@ class AnsibleEc2Cli(object):
             print >>sys.stderr, 'ERROR: No instance groups found - check inventory'
             sys.exit(1)
         
-        if self.args.verbose > 0:
-            print 'Inventory produced %d groups' % len(groups)
+        if self.verbose > 0:
+            print 'Inventory has %d groups' % len(groups)
         
         return groups
+    
+    
+    def build_filter_sets(self):
+        ''' Builds a set of sets, where each set is one group determined by a
+        filter '''
+        
+        groups = self.get_groups()
+        sets = {}
+        for filter in self.group_filters:
+            hosts = []
+            for group in groups:
+                if group.name == filter or (self.args.ic and group.name.lower() == filter.lower()):
+                    hosts = [host.name for host in group.get_hosts()]
+                    break
+            sets[filter] = hosts
+            if self.verbose > 0:
+                print 'Group %s has %d hosts' % (filter, len(hosts))
+        
+        return sets
     
     
     def help(self):
@@ -178,78 +206,100 @@ class AnsibleEc2Cli(object):
     def list(self):
         ''' Gets a list of instances '''
         
-        group_names = []
-        for group in self.get_groups():
-            group_names.append(group.name)
+        sets = []
+        for group,hosts in self.build_filter_sets().iteritems():
+            hosts.sort()
+            sets.append(set(hosts))
+            if self.args.show_work:
+                print '[%s]' % group
+                for host in hosts:
+                    print host
+                print ''
         
-        group_names.sort()
-        for name in group_names:
-            print name 
+        intersection = set.intersection(*sets)
+        num_hosts = len(intersection)
+        x = 'host' if num_hosts == 1 else 'hosts'
+        print '(%d %s)' % (num_hosts, x)
+        i = 0
+        for host in intersection:
+            if self.args.long:
+                info = self.inventory_manager.get_variables(host)
+                tag_name = ' (' + info['ec2_tag_Name'] + ')' if 'ec2_tag_Name' in info else ''
+                print '%4d: %10s %s%s' % (i, info['ec2_id'], host, tag_name)
+                i += 1
+            else:
+                print host
     
     
     def ssh(self):
-        if 'name' in self.args and not self.args.name == None:
-            instance_group = self.get_group_by_name(self.args.name)
-            hosts = instance_group.get_hosts();
-            if len(hosts) != 1:
-                print >>sys.stderr, 'ERROR: %s matches more than one instance' % pattern
-                for h in hosts:
-                    print '  - ' + h.name
-                sys.exit(1)
-            host = hosts[0]
-            
-            cmd = 'ssh %s' % host.name
-            
-            print cmd
-            try:
-                retcode = call(cmd, shell=True)
-                if retcode < 0:
-                    print 'Child was terminated by signal', -retcode
-                else:
-                    print 'Child returned', retcode
-            except OSError as e:
-                print 'Execution failed:', e
-        else:
-            print 'oops: Not implemented yet'
+        ''' SSH into a host '''
+        
+        sets = []
+        for group,hosts in self.build_filter_sets().iteritems():
+            hosts.sort()
+            sets.append(set(hosts))
+        
+        intersection = set.intersection(*sets)
+        hosts = list(intersection)
+        
+        if len(hosts) == 0:
+            print >>sys.stderr, 'ERROR: Filters match zero instances'
+            sys.exit(1)
+        elif len(hosts) > 1:
+            print >>sys.stderr, 'ERROR: Filters matches too many instances (ssh requires only 1 instance)'
+            for host in hosts:
+                print '  - ' + host
+            sys.exit(1)
+        host = hosts[0]
+        
+        cmd = 'ssh %s' % host
+        
+        print cmd
+        try:
+            retcode = call(cmd, shell=True)
+            if retcode == 0:
+                pass
+            elif retcode < 0:
+                print 'SSH was terminated by signal', -retcode
+            else:
+                print 'SSH returned', retcode
+        except OSError as e:
+            print 'Execution failed:', e
     
     
     def info(self):
-        print self.args
-        if 'name' in self.args and not self.args.name == None:
-            instance_group = self.get_group_by_name(self.args.name)
-            i = 1
-            now = datetime.utcnow()
-            for host in instance_group.get_hosts():
-                info = self.inventory_manager.get_variables(host.name)
-                
-                # Do date/time calculations
-                launch = dateutil.parser.parse(info['ec2_launch_time']).replace(tzinfo=None)
-                uptime = now - launch
-                
-                # We have all the data, go print
-                print '%d: %s' % (i, info['ec2_tag_Name'])
-                print '  Instance: %-15s      AMI: %-15s  Kernel: %s' % (info['ec2_id'], info['ec2_image_id'], info['ec2_kernel'])
-                print '      Type: %-15s     Arch: %-15s   State: %s' % (info['ec2_instance_type'], info['ec2_architecture'], info['ec2_state'])
-                print '      Zone: %-15s Key Pair: %s' % (info['ec2_placement'], info['ec2_key_name'])
-                print '  Launch Time: %s' % info['ec2_launch_time']
-                print '      Up Time: %d days, %d hours' % (uptime.days, (uptime.seconds/3600))
-                print '   Public DNS: %s' % info['ec2_public_dns_name']
-                print '    Public IP: %s' % info['ec2_ip_address']
-                print '  Private DNS: %s' % info['ec2_private_dns_name']
-                print '   Private IP: %s' % info['ec2_private_ip_address']
-                if info['ec2_vpc_id']:
-                    print '  VPC: %s    Subnet: %s' % (info['ec2_vpc_id'], info['ec2_subnet_id'])
-                print '  Security Groups: %s' % info['ec2_security_group_names']
-                print ''
-                i = i+1
-                '''
-                ec2_security_group_ids: sg-6021bd08
-                ec2_security_group_names: dmp-0725-InstanceSecurityGroup-1XTZBSCMP1BZB
-                group_names: [u'i-b6c8f3ce', u'security_group_dmp-0725-InstanceSecurityGroup-1XTZBSCMP1BZB', u'tag_Name_DMP', u'tag_aws_autoscaling_groupName_dmp-0725-DMPServerGroup-144PQWYTP9X94', u'tag_aws_cloudformation_logical-id_DMPServerGroup', u'tag_aws_cloudformation_stack-id_arn_aws_cloudformation_us-east-1_313895386618_stack_dmp-0725_0d723e40-d689-11e1-b4af-506cfa68b825', u'tag_aws_cloudformation_stack-name_dmp-0725', u'us-east-1', u'us-east-1c']
-                '''
+        sets = []
+        for group,hosts in self.build_filter_sets().iteritems():
+            hosts.sort()
+            sets.append(set(hosts))
+        intersection = set.intersection(*sets)
         
-        else:
-            print 'oops: Not implemented yet'
+        i = 1
+        now = datetime.utcnow()
+        for host in intersection:
+            info = self.inventory_manager.get_variables(host)
+            tag_name = info['ec2_tag_Name'] if 'ec2_tag_Name' in info else ''
+            
+            # Do date/time calculations
+            launch = dateutil.parser.parse(info['ec2_launch_time']).replace(tzinfo=None)
+            uptime = now - launch
+            
+            # We have all the data, go print
+            print '%d: %s' % (i, tag_name)
+            print '  Instance: %-15s      AMI: %-15s  Kernel: %s' % (info['ec2_id'], info['ec2_image_id'], info['ec2_kernel'])
+            print '      Type: %-15s     Arch: %-15s   State: %s' % (info['ec2_instance_type'], info['ec2_architecture'], info['ec2_state'])
+            print '      Zone: %-15s Key Pair: %s' % (info['ec2_placement'], info['ec2_key_name'])
+            print '  Launch Time: %s' % info['ec2_launch_time']
+            print '      Up Time: %d days, %d hours' % (uptime.days, (uptime.seconds/3600))
+            print '   Public DNS: %s' % info['ec2_public_dns_name']
+            print '    Public IP: %s' % info['ec2_ip_address']
+            print '  Private DNS: %s' % info['ec2_private_dns_name']
+            print '   Private IP: %s' % info['ec2_private_ip_address']
+            if info['ec2_vpc_id']:
+                print '  VPC: %s    Subnet: %s' % (info['ec2_vpc_id'], info['ec2_subnet_id'])
+            print '  Security Groups: %s' % info['ec2_security_group_names']
+            print ''
+            i = i+1
     
     
     def to_safe(self, word):
