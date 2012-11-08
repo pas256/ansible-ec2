@@ -3,14 +3,11 @@
 import argparse
 import sys
 import re
-import pprint
 from datetime import datetime
 import dateutil.parser
 from subprocess import call
 from ansible import inventory
 from ansible import constants
-
-pp = pprint.PrettyPrinter(indent=2)
 
 class AnsibleEc2Cli(object):
     def __init__(self):
