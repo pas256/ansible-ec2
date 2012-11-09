@@ -60,17 +60,17 @@ class AnsibleEc2Cli(object):
         help_parser.add_argument('help_command', metavar='command', nargs='*', help='The command to get help on')
         
         # Create the parser for the "list" command
-        list_parser = self.add_command('list', 'Get a list of instances/groups')
+        list_parser = self.add_command('list', 'Get a list of instances')
         list_parser.add_argument('-l', '--long', action='store_true', default=False,
                 help='List in long (detailed) format - but not as detailed as "ansible-ec2 info"')
         list_parser.add_argument('--show-work', action='store_true', default=False,
                 help='Show the working out of each group before combining filters')
         
         # Create the parser for the "info" command
-        info_parser = self.add_command('info', 'Get information about a specific instance')
+        info_parser = self.add_command('info', 'Get detailed information about instances')
         
         # Create the parser for the "ssh" command
-        ssh_parser = self.add_command('ssh', 'Open an SSH connection to a specific instance')
+        ssh_parser = self.add_command('ssh', 'Open an interactive SSH connection to a specific instance')
         ssh_parser.add_argument('--private-key', metavar='PRIVATE_KEY_FILE', action='store', help='Use this file to authenticate the connection')
         ssh_parser.add_argument('-u', '--user', metavar='REMOTE_USER', action='store', help='Connect as this user')
         ssh_parser.add_argument('-n', metavar='NUMBER', type=int, action='store', help='Instance number to connect to when filters match multiple hosts')
