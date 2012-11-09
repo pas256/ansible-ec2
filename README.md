@@ -45,26 +45,31 @@ A collection of commands to simplify common tasks built on top of Ansible and th
 Now you can run through the [examples](#examples) above or simply list all instance
 
     ansible-ec2 list
-    
+
+
+## Usage
+
+    ansible-ec2 COMMAND [OPTIONS] [FILTERS]
+
 
 ## Commands
 
--   `help`
-    Get help about a command
-    
--   `list`
-    Get a list of instances
-    
--   `info`
-    Get detailed information about instances
-    
--   `ssh`
-    Open an interactive SSH connection to a specific instance
+-   `help`  Get help about a command
+
+-   `list`  Get a list of instances
+
+-   `info`  Get detailed information about instances
+
+-   `ssh`  Open an interactive SSH connection to a specific instance
 
 
 ## Filters
 
 By default, `ansible-ec2` performs a command against all instances. This might be fine for `list`, but far from ideal for `ssh`. This is where filters become powerful, by limiting the set of instances a command runs on.
+
+Multiple filters can be used together to target specific instances. In this example, only *m1.large* instances using the *peter* key pair in *us-east-1b* are listed:
+
+    ansible-ec2 list --type m1.large --key peter --zone us-east-1b
 
 ### Name
 
@@ -72,28 +77,55 @@ EC2 instances can have tags (simple key/value pairs) associated with them. The '
 
     --name NAME
     
+    Example:
+    ansible-ec2 list --name MyDB1
+    
 ### Security Group
 
 Run a command only against instances in a specific security group
 
     --sg SECURITY_GROUP
     
-    E.g. --sg=default
-
+    Example:
+    ansible-ec2 list --sg default
 
 ### Key Pair
 
-    --key KEY_PAIR        The name of the key pair to filter on. E.g.
-                        --key=superadmin
-    --type INSTANCE_TYPE  Return only host using the specific instance type.
-                        E.g. --type=m1.xlarge
-    --region REGION       Limit to only one region. E.g. --region=us-east-1
+The name of the key pair to filter on
+
+    --key KEY_PAIR
+    
+    Example:
+    ansible-ec2 list --key superadmin
+
+### Instance Type
+
+EC2 instances come in a variety of different types, from *t1.micro* to *m1.medium* to *hi1.4xlarge*. This filter enables limiting the instance list to only those using a specific instance type
+
+    --type INSTANCE_TYPE
+    
+    Example:
+    ansible-ec2 list --type=m1.xlarge
+
+### Region and Availability Zone
+
+EC2 is all over the world, so these 2 filters create a subset of instance only in a specific region or availability zone
+
+    --region REGION
     --zone AVAILABILITY_ZONE
-                        Limit to only one availability zone. E.g. --zone=us-
-                        east-1a
-    GROUP_NAME            The raw group name to filter on based on the groups
-                        produced by the Inventory. This can also be the
-                        Instance ID. E.g. i-abcd1234
+    
+    Examples:
+    ansible-ec2 list --region us-east-1
+    ansible-ec2 list --zone us-east-1a
+
+### Instance ID and Raw Group Name
+
+The hosts returned by the EC2 inventory plugin are in one or more groups. One such group is the Instance ID. As the plugin evolves, more groups may be added, so this allows access to all of them without code modification. It also allows filtering on other tag key/value pairs.
+
+    Examples:
+    ansible-ec2 info i-abcd1234
+    ansible-ec2 list tag_aws_elasticmapreduce_instance-group-role_CORE
+    ansible-ec2 list tag_aws_elasticmapreduce_job-flow-id_j-ABCD1234EFGH
                         
                         
                         
