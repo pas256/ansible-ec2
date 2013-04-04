@@ -334,8 +334,8 @@ class AnsibleEc2Cli(object):
             # We have all the data, go print
             print '%d: %s' % (i, tag_name)
             print '  Instance: %-15s      AMI: %-15s  Kernel: %s' % (info['ec2_id'], info['ec2_image_id'], info['ec2_kernel'])
-            print '      Type: %-15s     Arch: %-15s   State: %s' % (info['ec2_instance_type'], info['ec2_architecture'], info['ec2_state'])
-            print '      Zone: %-15s Key Pair: %s' % (info['ec2_placement'], info['ec2_key_name'])
+            print '      Type: %-15s     Arch: %-15s   State: %s' % (info['ec2_instance_type'], info['ec2_architecture'], self.get_field(info, 'ec2_state'))
+            print '      Zone: %-15s Key Pair: %s' % (self.get_field(info, 'ec2_placement'), self.get_field(info, 'ec2_key_name'))
             print '  Launch Time: %s' % info['ec2_launch_time']
             print '      Up Time: %d days, %d hours' % (uptime.days, (uptime.seconds/3600))
             print '   Public DNS: %s' % info['ec2_public_dns_name']
@@ -347,6 +347,12 @@ class AnsibleEc2Cli(object):
             print '  Security Groups: %s' % info['ec2_security_group_names']
             print ''
             i = i+1
+    
+    
+    def get_field(self, data, key):
+        ''' Safely gets a field from an array, where the default is an empty string '''
+        
+        return data[key] if key in data else ''
     
     
     def to_safe(self, word):
