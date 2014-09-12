@@ -297,7 +297,7 @@ class AnsibleEc2Cli(object):
         if self.args.user:
             user = self.args.user + '@'
         if self.args.private_key:
-            user = '-i %s ' % self.args.private_key
+            key = '-i %s ' % self.args.private_key
         cmd = 'ssh %s%s%s' % (key, user, host)
         if self.verbose >= 1: print cmd
         
