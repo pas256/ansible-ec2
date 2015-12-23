@@ -326,6 +326,7 @@ class AnsibleEc2Cli(object):
                 continue
             
             tag_name = info['ec2_tag_Name'] if 'ec2_tag_Name' in info else ''
+            host_tags = [(key.replace('ec2_tag_', ''), info[key]) for key in info if 'ec2_tag' in key]
             
             # Do date/time calculations
             launch = dateutil.parser.parse(info['ec2_launch_time']).replace(tzinfo=None)
@@ -345,6 +346,7 @@ class AnsibleEc2Cli(object):
             if info['ec2_vpc_id']:
                 print '  VPC: %s    Subnet: %s' % (info['ec2_vpc_id'], info['ec2_subnet_id'])
             print '  Security Groups: %s' % info['ec2_security_group_names']
+            print '    Instance Tags: %s' % ', '.join(['(%s %s)' % (key, value) for key, value in host_tags])
             print ''
             i = i+1
     
