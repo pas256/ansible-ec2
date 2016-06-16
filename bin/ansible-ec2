@@ -24,26 +24,26 @@ from ansible import constants
 class AnsibleEc2Cli(object):
     def __init__(self):
         ''' Main execution path '''
-        
+
         # Handle CLI
         self.args = self.parse_cli_args()
-        
+
         # CLI post-processing
         self.verbose = 0
         if 'verbose' in self.args and self.args.verbose != None:
             self.verbose = self.args.verbose
         self.group_filters = self.get_group_filters()
-        
+
         # Run desired command
         self.args.func()
-    
-    
+
+
     def parse_cli_args(self):
         ''' Command line argument processing '''
-        
+
         # Top level parser
         self.parser = argparse.ArgumentParser(description='AWS EC2 helpers, utilities and tricks built on top of Ansible')
-        
+
         # Options common to all commands
         self._common_parser = argparse.ArgumentParser(add_help=False)
         self._common_parser.add_argument('-i', '--inventory-file', metavar='INVENTORY',
@@ -53,7 +53,7 @@ class AnsibleEc2Cli(object):
                 help='Ignore case - perform case insensitive matches on the filters')
         self._common_parser.add_argument('-v', '--verbose', action='count',
                 help='Verbose output useful for debugging, can be use multiple times for more verbose output')
-        
+
         # Filtering
         filters = self._common_parser.add_argument_group('Filters', 'Reduce the number of instances by filtering on various fields. Filters can be used in combination with each other, and only instances that appear in all filtered sets are returned. If no filters are used, all instances are returned in all regions.')
         filters.add_argument('--name', action='store', help='The "Name" tag of the instance/s to filter on. E.g. --name=Server1')
@@ -63,114 +63,114 @@ class AnsibleEc2Cli(object):
         filters.add_argument('--region', action='store', help='Limit to only one region. E.g. --region=us-east-1')
         filters.add_argument('--zone', metavar='AVAILABILITY_ZONE', action='store', help='Limit to only one availability zone. E.g. --zone=us-east-1a')
         filters.add_argument('raw_group', metavar='GROUP_NAME', nargs='?', help='The raw group name to filter on based on the groups produced by the Inventory. This can also be the Instance ID. E.g. i-abcd1234')
-        
+
         self.subparsers = self.parser.add_subparsers(title='Commands')
         self.command_parsers = {}
-        
+
         # Create the parser for the "help" command
         help_parser = self.add_command('help', 'Get help about a command', add_common=False)
         help_parser.add_argument('help_command', metavar='command', nargs='*', help='The command to get help on')
-        
+
         # Create the parser for the "list" command
         list_parser = self.add_command('list', 'Get a list of instances')
         list_parser.add_argument('-l', '--long', action='store_true', default=False,
                 help='List in long (detailed) format - but not as detailed as "ansible-ec2 info"')
         list_parser.add_argument('--show-work', action='store_true', default=False,
                 help='Show the working out of each group before combining filters')
-        
+
         # Create the parser for the "info" command
         info_parser = self.add_command('info', 'Get detailed information about instances')
-        
+
         # Create the parser for the "ssh" command
         ssh_parser = self.add_command('ssh', 'Open an interactive SSH connection to a specific instance')
         ssh_parser.add_argument('--private-key', metavar='PRIVATE_KEY_FILE', action='store', help='Use this file to authenticate the connection')
         ssh_parser.add_argument('-u', '--user', metavar='REMOTE_USER', action='store', help='Connect as this user')
         ssh_parser.add_argument('-n', metavar='NUMBER', type=int, action='store', help='Instance number to connect to when filters match multiple hosts')
-        
+
         # Final step - go parse those args
         return self.parser.parse_args()
-    
-    
+
+
     def add_command(self, command, help, add_common=True):
         ''' Adds a command to the list of available commands, and returns a
         parser that can be used to add arguments specific to that command '''
-        
+
         if add_common:
             self.command_parsers[command] = self.subparsers.add_parser(command,
                     help=help, parents=[self._common_parser])
         else:
             self.command_parsers[command] = self.subparsers.add_parser(command, help=help)
-        
+
         self.command_parsers[command].set_defaults(func=getattr(self, command))
-        
+
         return self.command_parsers[command]
-    
-    
+
+
     def get_group_filters(self):
         ''' Apply all filters to the groups - basic set intersection '''
-        
+
         group_filters = []
-        
+
         # Name filter
         if 'name' in self.args and self.args.name != None:
             pattern = self.to_safe('tag_Name_%s' % self.args.name)
             if self.verbose >= 1:
                 print 'Filter: Name: matching %s' % pattern
             group_filters.append(pattern)
-        
+
         # Security group filter
         if 'sg' in self.args and self.args.sg != None:
             pattern = self.to_safe('security_group_%s' % self.args.sg)
             if self.verbose >= 1:
                 print 'Filter: Security Group: matching %s' % pattern
             group_filters.append(pattern)
-        
+
         # Key pair filter
         if 'key' in self.args and self.args.key != None:
             pattern = self.to_safe('key_%s' % self.args.key)
             if self.verbose >= 1:
                 print 'Filter: Key pair: matching %s' % pattern
             group_filters.append(pattern)
-        
+
         # Instance type filter
         if 'type' in self.args and self.args.type != None:
             pattern = self.to_safe('type_%s' % self.args.type)
             if self.verbose >= 1:
                 print 'Filter: Instance type: matching %s' % pattern
             group_filters.append(pattern)
-        
+
         # Availability zone filter
         if 'zone' in self.args and self.args.zone != None:
             pattern = self.to_safe(self.args.zone)
             if self.verbose >= 1:
                 print 'Filter: Availability Zone: matching %s' % pattern
             group_filters.append(pattern)
-        
+
         # Region filter
         if 'region' in self.args and self.args.region != None:
             pattern = self.to_safe(self.args.region)
             if self.verbose >= 1:
                 print 'Filter: Region: matching %s' % pattern
             group_filters.append(pattern)
-        
+
         # Raw group filter
         if 'raw_group' in self.args and self.args.raw_group != None:
             pattern = self.to_safe(self.args.raw_group)
             if self.verbose >= 1:
                 print 'Filter: Raw Group: matching %s' % pattern
             group_filters.append(pattern)
-        
+
         if len(group_filters) == 0:
             # No filtering - return everything
             if self.verbose >= 1:
                 print 'Filter: none'
-        
+
         return group_filters
-    
-    
+
+
     def get_groups(self):
         ''' Gets a list of all groups '''
-        
+
         if self.verbose > 0:
             print 'Reading inventory...'
         self.inventory_manager = inventory.Inventory(self.args.inventory_file)
@@ -178,17 +178,17 @@ class AnsibleEc2Cli(object):
         if len(groups) == 0:
             print >>sys.stderr, 'ERROR: No instance groups found - check inventory'
             sys.exit(1)
-        
+
         if self.verbose > 0:
             print 'Inventory has %d groups' % len(groups)
-        
+
         return groups
-    
-    
+
+
     def build_filter_sets(self):
         ''' Builds a set of sets, where each set is one group determined by a
         filter '''
-        
+
         self.groups = self.get_groups()
         sets = {}
         for filter in self.group_filters:
@@ -200,13 +200,13 @@ class AnsibleEc2Cli(object):
             sets[filter] = hosts
             if self.verbose > 0:
                 print 'Group %s has %d hosts' % (filter, len(hosts))
-        
+
         return sets
-    
-    
+
+
     def get_filtered_hosts(self):
         ''' Apply the filters to the set of hosts '''
-        
+
         filter_sets = self.build_filter_sets()
         if len(filter_sets) == 0:
             # No filters, so return entire list
@@ -214,9 +214,9 @@ class AnsibleEc2Cli(object):
             for group in self.groups:
                 for host in group.get_hosts():
                     host_set.add(host.name)
-                
+
             hosts = list(host_set)
-        
+
         else:
             # Apply filters
             sets = []
@@ -228,17 +228,17 @@ class AnsibleEc2Cli(object):
                     for host in hosts:
                         print host
                     print ''
-            
+
             intersection = set.intersection(*sets)
             hosts = list(intersection)
-        
+
         hosts.sort()
         return hosts
-    
-    
+
+
     def help(self):
         ''' Command specific help '''
-        
+
         if 'help_command' in self.args:
             if len(self.args.help_command) == 0:
                 self.parser.print_help()
@@ -249,11 +249,11 @@ class AnsibleEc2Cli(object):
                 else:
                     print >>sys.stderr, 'ERROR: Unknown command: %s' % self.args.help_command[0]
                     sys.exit(1)
-    
-    
+
+
     def list(self):
         ''' Gets a list of instances '''
-        
+
         hosts = self.get_filtered_hosts()
         num_hosts = len(hosts)
         x = 'host' if num_hosts == 1 else 'hosts'
@@ -265,17 +265,17 @@ class AnsibleEc2Cli(object):
                 if not 'ec2_id' in info:
                     print 'Warning: Could not get EC2 information for: %s' % host
                     continue
-                
+
                 tag_name = ' (' + info['ec2_tag_Name'] + ')' if 'ec2_tag_Name' in info else ''
                 print '%4d: %10s %s%s' % (i, info['ec2_id'], host, tag_name)
                 i += 1
             else:
                 print host
-    
-    
+
+
     def ssh(self):
         ''' SSH into a host '''
-        
+
         hosts = self.get_filtered_hosts()
         if len(hosts) == 0:
             print >>sys.stderr, 'ERROR: Filters match zero instances'
@@ -290,7 +290,7 @@ class AnsibleEc2Cli(object):
             print >>sys.stderr, 'ERROR: Bad number index - must be less than %d' % len(hosts)
             sys.exit(1)
         host = hosts[n]
-        
+
         # Build SSH command
         user = ''
         key = ''
@@ -300,7 +300,7 @@ class AnsibleEc2Cli(object):
             key = '-i %s ' % self.args.private_key
         cmd = 'ssh %s%s%s' % (key, user, host)
         if self.verbose >= 1: print cmd
-        
+
         # Execute SSH command
         try:
             retcode = call(cmd, shell=True)
@@ -312,11 +312,11 @@ class AnsibleEc2Cli(object):
                 print 'SSH returned', retcode
         except OSError as e:
             print 'Execution failed:', e
-    
-    
+
+
     def info(self):
         ''' Get detailed information about instances '''
-        
+
         i = 1
         now = datetime.utcnow()
         for host in self.get_filtered_hosts():
@@ -324,18 +324,19 @@ class AnsibleEc2Cli(object):
             if not 'ec2_id' in info:
                 print 'Warning: Could not get EC2 information for: %s' % host
                 continue
-            
+
             tag_name = info['ec2_tag_Name'] if 'ec2_tag_Name' in info else ''
             host_tags = [(key.replace('ec2_tag_', ''), info[key]) for key in info if 'ec2_tag' in key]
-            
+
             # Do date/time calculations
             launch = dateutil.parser.parse(info['ec2_launch_time']).replace(tzinfo=None)
             uptime = now - launch
-            
+
             # We have all the data, go print
             print '%d: %s' % (i, tag_name)
             print '  Instance: %-15s      AMI: %-15s  Kernel: %s' % (info['ec2_id'], info['ec2_image_id'], info['ec2_kernel'])
             print '      Type: %-15s     Arch: %-15s   State: %s' % (info['ec2_instance_type'], info['ec2_architecture'], self.get_field(info, 'ec2_state'))
+            print ' Virt Type: %s' % info['ec2_virtualization_type']
             print '      Zone: %-15s Key Pair: %s' % (self.get_field(info, 'ec2_placement'), self.get_field(info, 'ec2_key_name'))
             print '  Launch Time: %s' % info['ec2_launch_time']
             print '      Up Time: %d days, %d hours' % (uptime.days, (uptime.seconds/3600))
@@ -349,19 +350,19 @@ class AnsibleEc2Cli(object):
             print '    Instance Tags: %s' % ', '.join(['(%s %s)' % (key, value) for key, value in host_tags])
             print ''
             i = i+1
-    
-    
+
+
     def get_field(self, data, key):
         ''' Safely gets a field from an array, where the default is an empty string '''
-        
+
         return data[key] if key in data else ''
-    
-    
+
+
     def to_safe(self, word):
         ''' Converts 'bad' characters in a string to underscores so they can be
         used as Ansible groups (this needs to always be the same as the
         EC2 inventory plugin)'''
-        
+
         return re.sub("[^A-Za-z0-9\-]", "_", word)
 
 
